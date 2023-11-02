@@ -231,6 +231,14 @@ class MLProcessing:
                                     # check the data array size whether it is the same as the output number
                                     print(len(message["data"]))
 
+                                    # check whether there are enough data in the past buffer, if not, give error to the websocket
+                                    if self.past_data.isEmpty():
+                                        print("Not enough data in the past buffer")
+                                        self.simple_send_websocket_message("Not enough data in the past buffer",message_type="error")
+                                        return
+                                        
+
+                                    
                                     if len(message["data"]) == self.output_number:
                                         # add the data to the temp buffer
                                         self.trainning_data_x.append(self.past_data)
@@ -244,6 +252,12 @@ class MLProcessing:
                                         self.simple_send_websocket_message("Data size is not the same as the output number",message_type="error")
                                         
                                     # add the data to the temp buffer
+                                else:
+                                    print("No data in the message")
+                                    self.simple_send_websocket_message("No data in the message",message_type="error")
+                            else:
+                                print("System is not in training mode")
+                                self.simple_send_websocket_message("System is not in training mode",message_type="error")
                         elif (message["message"]=="/command/train/stop"):
                             # stop training
                             print("Stop training")
