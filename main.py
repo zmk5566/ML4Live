@@ -11,6 +11,7 @@ from joblib import dump, load
 import threading
 from enum import Enum, auto
 from threading import Thread
+import pandas as pd
 
 class SystemStatus(Enum):
     STANDBY = auto()
@@ -18,6 +19,10 @@ class SystemStatus(Enum):
     TRAINING = auto()
     STOPPED = auto()
 
+class MODEL_LIST(Enum):
+    KNN = auto()
+    DNN = auto()
+    LSTM = auto()
 
 class PastBuffer:
     def __init__(self, max_size, array_shape):
@@ -200,15 +205,45 @@ class MLProcessing:
 
         return data
 
-    def train(self, data,model_type="KNN"):
+    def train(self, model_type="KNN"):
         # Implement your training function here
         # start training
+        print(self.trainning_data_x,self.trainning_data_y)
+        df_x = pd.DataFrame(self.trainning_data_x)
+        df_y = pd.DataFrame(self.trainning_data_y)
+        # current df_x contains an array of an array, need to iterate all the elements of it and flatten and convert it to a dataframe
+        #df_x = pd.DataFrame([item for sublist in self.trainning_data_x for item in sublist])
+        # Create a DataFrame
+        data =self.trainning_data_x
+
+        # Flatten and rename the series
+        frames = []
+        for i, arr in enumerate(data):
+            df = pd.DataFrame(arr)
+            s = df.stack().reset_index()
+            s.index = ['x_'  + str(x[0]) + '_' + str(x[1]) for x in s[['level_0', 'level_1']].values]
+            frames.append(s[0].to_frame().T)
+
+        # Concatenate all DataFrame rows into a single DataFrame
+        df_flat = pd.concat(frames, ignore_index=True)
+
+        # Print the result
+        df_x = df_flat
+
+        
+
+        df_x.to_csv("trainning_data_x.csv")
+        df_y.to_csv("trainning_data_y.csv")
+        # check the model type
         if model_type == "KNN":
             self.model = KNeighborsClassifier(n_neighbors=3)
             # start training using the training data x and y
             # singal to the websocket that training is started 
-
             self.model.fit(self.trainning_data_x, self.trainning_data_y)
+            # combine the training data x and y into panda dataframe， with x,y
+
+            # signal to the websocket that training is done
+            self.simple_send_websocket_message("Training is done",message_type="notification")
             self.is_training_complete = True
 
     def construct_status_json(self):
@@ -224,6 +259,10 @@ class MLProcessing:
         # report the existing message, the collected sample sizes
         message = { "message_type": "status_report" , "timestamp": time.time() , "data": {"message_counter":self.msg_counter,"sample_size":len(self.trainning_data_x)}}
         return message
+    
+    def get_all_training_data(self):
+        temp_msg = {"message_type": "training_data" , "timestamp": time.time() , "data": {"x":self.trainning_data_x,"y":self.trainning_data_y}}
+        
 
     # process the websocket message function 
     def process_websocket_message(self, message):
@@ -279,8 +318,9 @@ class MLProcessing:
                                     
                                     if len(message["data"]) == self.output_number:
                                         # add the data to the temp buffer
-                                        self.trainning_data_x.append(self.past_data)
+                                        self.trainning_data_x.append(self.past_data.getBuffer().tolist())
                                         self.trainning_data_y.append(message["data"])
+                                        #print (self.trainning_data_x,self.trainning_data_y)
                                         # construct a json file combine together with self.past_data and message["data"]
                                         data = {"data":self.past_data.getBuffer().tolist(),"label":message["data"]}
                                         self.simple_send_websocket_message("Added a new training point",data,message_type="notification")
@@ -296,6 +336,13 @@ class MLProcessing:
                             else:
                                 print("System is not in training mode")
                                 self.simple_send_websocket_message("System is not in training mode",message_type="error")
+                        elif (message["message"]=="/command/train/finish"):
+                            self.train()
+                            # finish training
+                            print("Finish training")
+                            # update the status
+                            self.status = SystemStatus.PREDICTING
+
                         elif (message["message"]=="/command/train/stop"):
                             # stop training
                             print("Stop training")
@@ -369,7 +416,7 @@ def main():
                              osc_input_topic='/gyrosc/ok/gyro',
                              osc_output_topic='/prediction',
                              osc_port=5005, 
-                             output_number=2,
+                             output_number=1,
                              websocket_port=5000)
 
     

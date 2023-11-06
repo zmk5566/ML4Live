@@ -13,3 +13,7 @@
 ## Add samples
 
 {"message_type":"command", "message":"/command/train/add","data":[1,2]}
+
+## Finish training
+
+{"message_type":"command", "message":"/command/train/finish"}
