@@ -189,6 +189,12 @@ class MLProcessing:
         #self.maintain_buffer(data)
         #iltered_data = self.filter_data(data)
 
+        # if it is predicting, then predict the data
+        if self.status == SystemStatus.PREDICTING:
+            prediction = self.predict([data])
+            # send the data to the websocket
+            self.simple_send_websocket_message("Predicting",prediction,message_type="prediction")
+
     def filter_data(self, data, filter_type="none", filter_windows_size=10):
         # Implement your filter here
         # several filters are available
@@ -239,7 +245,19 @@ class MLProcessing:
             self.model = KNeighborsClassifier(n_neighbors=3)
             # start training using the training data x and y
             # singal to the websocket that training is started 
-            self.model.fit(self.trainning_data_x, self.trainning_data_y)
+            # iterate through the training data x, and sum up the data
+
+            # Your 3D array
+            data = self.trainning_data_x
+
+            # Initialize an empty list
+            appended_data = []
+
+            # Loop through each subarray and append the first inner list to 'appended_data'
+            for subarray in data:
+                appended_data.append(subarray[-1])
+
+            self.model.fit(appended_data, self.trainning_data_y)
             # combine the training data x and y into panda dataframe， with x,y
 
             # signal to the websocket that training is done

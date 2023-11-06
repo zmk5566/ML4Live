@@ -12,7 +12,7 @@
 
 ## Add samples
 
-{"message_type":"command", "message":"/command/train/add","data":[1,2]}
+{"message_type":"command", "message":"/command/train/add","data":[0]}
 
 ## Finish training
 
