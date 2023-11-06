@@ -10,6 +10,7 @@ import time
 from joblib import dump, load
 import threading
 from enum import Enum, auto
+from threading import Thread
 
 class SystemStatus(Enum):
     STANDBY = auto()
@@ -45,7 +46,7 @@ class PastBuffer:
 
 
 class MLProcessing:
-    def __init__(self, input_osc_address, output_osc_address,osc_input_topic,osc_output_topic, osc_port, output_number,websocket_port,buffer_size=1):
+    def __init__(self, input_osc_address, output_osc_address,osc_input_topic,osc_output_topic, osc_port, output_number,websocket_port,buffer_size=5):
         self.input_osc_address = input_osc_address
         self.output_osc_address = output_osc_address
         self.osc_port = osc_port
@@ -57,6 +58,7 @@ class MLProcessing:
         self.msg_counter = 0
         self.websocket = None
         self.buffer_size = buffer_size
+        self.websocket_loop = None
 
 
         # Initialize machine learning model
@@ -89,27 +91,56 @@ class MLProcessing:
         # TODO : IT NEED TO BE PROPER IMPLEMENTED LATER. IT SHOULD STOP THE OSC CLIENT AND SERVER AND RESTART IT WITH THE NEW CONFIGURATION 
 
 
-    def listen(self):
-        self.osc_server = BlockingOSCUDPServer((self.input_osc_address, self.osc_port), self.dispatcher)
-        print(f"Listening for OSC on {self.osc_server.server_address}")
+    def start_websocket_server(self):
+        self.websocket_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.websocket_loop)
+        self.websocket_loop.run_until_complete(websockets.serve(self.websocket_handler, "localhost", self.websocket_port))
 
-        self.loop = asyncio.get_event_loop()
-        self.loop.run_until_complete(websockets.serve(self.websocket_handler, "localhost", self.websocket_port))
-        # run the loop forever, in the background
-
-        # create an async task to run the loop
-        
         try:
-            self.loop.run_forever()
+            self.websocket_loop.run_forever()
         except KeyboardInterrupt:
             pass
         finally:
             print("Closing asyncio loop.")
-            self.loop.close()
+            self.websocket_loop.close()
+
+
+    def listen(self):
+        self.osc_server = BlockingOSCUDPServer((self.input_osc_address, self.osc_port), self.dispatcher)
+        print(f"Listening for OSC on {self.osc_server.server_address}")
+
+        # Start WebSocket server in a separate thread
+        t = Thread(target=self.start_websocket_server)
+        t.start()
+
+        main_loop = asyncio.get_event_loop()
+        main_loop.create_task(self.send_regular_status_report())
+
+        # run the loop forever, in the background
+        try:
+            main_loop.run_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            print("Closing asyncio loop.")
+            main_loop.close()
 
 
         self.osc_server.shutdown()
         self.osc_thread.join()
+
+
+
+    async def send_regular_status_report(self):
+        while True:
+            # send the regular status report
+            print("Sending regular status report")
+            ## send the regular status report when the status is not in standby mode
+            if self.status != SystemStatus.STOPPED:
+                # send the regular status report
+                self.simple_send_websocket_message(self.construct_regular_status_report())
+            # sleep for 5 seconds
+            time.sleep(5)
 
 
     def initialize_osc_server(self):
@@ -146,6 +177,8 @@ class MLProcessing:
         #print("From {}: Received message: {}".format(unused_addr, args))
         data = np.array(args)  # convert args to numpy array for further processing
         #print(data)
+        # counter +1 
+        self.msg_counter +=1
 
         self.past_data.add(data)
         #self.maintain_buffer(data)
@@ -185,6 +218,11 @@ class MLProcessing:
                    "data": {"osc_input_address":self.input_osc_address,"osc_input_port":self.osc_port,"osc_input_topic":self.osc_input_topic,"osc_output_address":self.output_osc_address,"osc_output_port":self.osc_port,"osc_output_topic":self.osc_output_topic,"message_counter":self.msg_counter},
                    "message_type": "status"}
 
+        return message
+    
+    def construct_regular_status_report(self):
+        # report the existing message, the collected sample sizes
+        message = { "message_type": "status_report" , "timestamp": time.time() , "data": {"message_counter":self.msg_counter,"sample_size":len(self.trainning_data_x)}}
         return message
 
     # process the websocket message function 
@@ -288,7 +326,7 @@ class MLProcessing:
                         self.simple_send_websocket_message("Unknown command",message_type="error")
 
     def simple_send_websocket_message(self, message, data=[],message_type="status"):
-                    asyncio.run_coroutine_threadsafe(self.send_websocket_message(message,data,message_type), self.loop)
+                    asyncio.run_coroutine_threadsafe(self.send_websocket_message(message,data,message_type), self.websocket_loop)
 
 
     def predict(self, data):
@@ -312,7 +350,7 @@ class MLProcessing:
         print(message_type)
         if self.websocket:
             # print the websocket is started
-            print("Websocket is started, Ready to send message")
+            #print("Websocket is started, Ready to send message")
             if (message_type =="status"):
                 await self.websocket.send(self.construct_websocket_message(message,data,message_type))
             else:
