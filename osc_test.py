@@ -15,8 +15,8 @@ def print_all_messages(unused_addr, *args):
 dispatcher = dispatcher.Dispatcher()
 #dispatcher.set_default_handler(print_all_messages)
 
-dispatcher.map("/gyrosc/ok/gyro", print_osc_message)
+dispatcher.map("/prediction", print_osc_message)
 
-server = osc_server.ThreadingOSCUDPServer(("0.0.0.0", 5005), dispatcher)
+server = osc_server.ThreadingOSCUDPServer(("0.0.0.0", 6000), dispatcher)
 print("Serving on {}".format(server.server_address))
 server.serve_forever()

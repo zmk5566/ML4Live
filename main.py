@@ -51,7 +51,7 @@ class PastBuffer:
 
 
 class MLProcessing:
-    def __init__(self, input_osc_address, output_osc_address,osc_input_topic,osc_output_topic, osc_port, output_number,websocket_port,buffer_size=5):
+    def __init__(self, input_osc_address, output_osc_address,osc_input_topic,osc_output_topic, osc_port, output_number,websocket_port,buffer_size=5,osc_output_port=6000,prediction_mode=False):
         self.input_osc_address = input_osc_address
         self.output_osc_address = output_osc_address
         self.osc_port = osc_port
@@ -64,17 +64,30 @@ class MLProcessing:
         self.websocket = None
         self.buffer_size = buffer_size
         self.websocket_loop = None
+        self.osc_output_port = osc_output_port
+
 
 
         # Initialize machine learning model
         self.model = KNeighborsClassifier()
+        self.scaler = None
 
         # Create dispatcher for incoming OSC signals
         self.dispatcher = Dispatcher()
         self.dispatcher.map(osc_input_topic, self.process)
 
+        self.osc_server = BlockingOSCUDPServer((self.input_osc_address, self.osc_port), self.dispatcher)
+        print(f"Listening for OSC on {self.osc_server.server_address}")
         # Create client for outgoing OSC signals
-        self.client = udp_client.SimpleUDPClient(self.output_osc_address, self.osc_port)
+        self.client = udp_client.SimpleUDPClient(self.output_osc_address, self.osc_output_port)
+        print(self.output_osc_address, self.osc_output_port)
+        # Send single message.
+        address = "/prediction"  # Address pattern of the OSC message.
+        message = "Hello, World!"  # Content of the OSC message.
+
+        #self.client.send_message(address, message)  # Send message.
+        self.osc_send_communicate([0,0])
+
 
         # Initialize training variables
         self.start_sampling = False
@@ -83,7 +96,16 @@ class MLProcessing:
         self.trainning_data_x = []
         self.trainning_data_y = []
         self.temp_buffer = []
-        self.past_data = PastBuffer(self.buffer_size, (3,))
+        self.past_data = PastBuffer(self.buffer_size, (2,))
+
+        if (prediction_mode):
+            self.status = SystemStatus.PREDICTING
+            # Load the saved model from the file
+            self.model = load('model.joblib')
+            self.scaler = load('scaler.joblib')
+
+            print ("Model loaded")
+            self.initialize_osc_server()
     
     def update_processing(self, input_osc_address, output_osc_address,osc_input_topic,osc_output_topic, osc_port,output_number):
 
@@ -111,8 +133,6 @@ class MLProcessing:
 
 
     def listen(self):
-        self.osc_server = BlockingOSCUDPServer((self.input_osc_address, self.osc_port), self.dispatcher)
-        print(f"Listening for OSC on {self.osc_server.server_address}")
 
         # Start WebSocket server in a separate thread
         t = Thread(target=self.start_websocket_server)
@@ -149,7 +169,6 @@ class MLProcessing:
 
 
     def initialize_osc_server(self):
-        self.status = SystemStatus.STANDBY
         self.osc_thread = threading.Thread(target=self.osc_server.serve_forever)
         self.osc_thread.start()
 
@@ -180,7 +199,7 @@ class MLProcessing:
     def process(self, unused_addr,*args):
         # Process incoming OSC signal
         #print("From {}: Received message: {}".format(unused_addr, args))
-        data = np.array(args)  # convert args to numpy array for further processing
+        data = np.array([args[-2],args[-1]])  # convert args to numpy array for further processing
         #print(data)
         # counter +1 
         self.msg_counter +=1
@@ -192,8 +211,12 @@ class MLProcessing:
         # if it is predicting, then predict the data
         if self.status == SystemStatus.PREDICTING:
             prediction = self.predict([data])
+            print("raw_data",data)
             # send the data to the websocket
+            self.osc_send_communicate(prediction)
             self.simple_send_websocket_message("Predicting",prediction,message_type="prediction")
+
+
 
     def filter_data(self, data, filter_type="none", filter_windows_size=10):
         # Implement your filter here
@@ -372,10 +395,19 @@ class MLProcessing:
 
                         elif (message["message"]=="/command/model/load"):
                             # load the model
-                            self.model = load("model.joblib")
+                            # Load the saved model from the file
+                            self.model = load('model.joblib')
+                            self.scaler = load('scaler.joblib')
+
+
                             print ("Model loaded")
+                            # change the status
+                            self.status = SystemStatus.PREDICTING
+
                         elif (message["message"]=="/command/system/start"):
                             # start the osc server
+                            self.status = SystemStatus.STANDBY
+
                             self.initialize_osc_server()
                             print ("OSC started")
                             # print the port 
@@ -396,10 +428,11 @@ class MLProcessing:
 
     def predict(self, data):
         # Implement your prediction function here
-        return self.model.predict(data)
+        new_data_scaled = self.scaler.transform(data)
+        return self.model.predict(new_data_scaled)
 
-    def communicate(self, message):
-        self.client.send_message("/prediction", message,'status')
+    def osc_send_communicate(self, message):
+        self.client.send_message("/prediction", message)
         
 
     def construct_websocket_message(self, message, data=[], message_type="status"):
@@ -430,12 +463,15 @@ class MLProcessing:
 def main():
     # Create MLProcessing object with specified OSC input, output, ports and WebSocket port
     processor = MLProcessing(input_osc_address='0.0.0.0', 
-                             output_osc_address='localhost',  # replace with your target address
-                             osc_input_topic='/gyrosc/ok/gyro',
+                             output_osc_address='127.0.0.1',  # replace with your target address
+                             osc_input_topic='/arduino/sensors',
                              osc_output_topic='/prediction',
-                             osc_port=5005, 
+                             osc_port=12000, 
                              output_number=1,
-                             websocket_port=5000)
+                             websocket_port=5000,
+                             osc_output_port=6000,
+                             prediction_mode=True
+                             )
 
     
 
